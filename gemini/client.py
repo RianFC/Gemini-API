@@ -13,6 +13,7 @@ from .src.misc.utils import upload_image, load_cookies
 from .src.model.parser.response_parser import ResponseParser
 from .src.model.output import GeminiCandidate, GeminiModelOutput
 from .src.model.parser.custom_parser import ParseMethod1, ParseMethod2
+import base64
 from .src.misc.exceptions import (
     GeminiAPIError,
     PackageError,
@@ -67,7 +68,7 @@ class Gemini:
         target_cookies: List = None,
         timeout: int = 30,
         proxies: Optional[dict] = None,
-        verify: bool = True,  # Try to use if needed.
+        verify: bool = True, # Try to use if needed.
     ) -> None:
         """
         Initializes the Gemini object with session, cookies, and other configurations.
@@ -162,7 +163,9 @@ class Gemini:
             if sid_match:
                 self._sid = sid_match.group(1)
             else:
-                print("Skip FdrFJe value.")
+                print(
+                    "Skip FdrFJe value."
+                )
             if nonce_match:
                 self._nonce = nonce_match.group(1)
             else:
@@ -236,6 +239,61 @@ class Gemini:
             },
         )
 
+    def speech(self, input_text: str, lang: str = "en-US") -> dict:
+        """
+        Get speech audio from Bard API for the given input text.
+
+        Example:
+        >>> token = 'xxxxxx'
+        >>> bard = Bard(token=token)
+        >>> audio = bard.speech("hello!")
+        >>> with open("bard.ogg", "wb") as f:
+        >>>     f.write(bytes(audio['audio']))
+
+        Args:
+            input_text (str): Input text for the query.
+            lang (str, optional, default = "en-US"): Input language for the query.
+
+        Returns:
+            dict: Answer from the Bard API in the following format:
+            {
+                "audio": bytes,
+                "status_code": int
+            }
+        """
+        params = self._construct_params(self._sid)
+
+        input_text_struct = [
+            [["XqA3Ic", json.dumps([None, input_text, lang, None, 2])]]
+        ]
+
+        data = {
+            "f.req": json.dumps(input_text_struct),
+            "at": self._nonce,
+        }
+
+        # Get response
+        resp = self.session.post(
+            "https://gemini.google.com/_/BardChatUi/data/batchexecute",
+            params=params,
+            data=data,
+            timeout=self.timeout,
+            proxies=self.proxies,
+        )
+
+        # Post-processing of response
+        resp_dict = json.loads(resp.content.splitlines()[3])[0][2]
+        if not resp_dict:
+            return {
+                "content": f"Response Error: {resp.content}. "
+                f"\nUnable to get response."
+                f"\nPlease double-check the cookie values and verify your network environment or google account."
+            }
+        resp_json = json.loads(resp_dict)
+        audio_b64 = resp_json[0]
+        audio_bytes = base64.b64decode(audio_b64)
+        return {"audio": audio_bytes, "status_code": resp.status_code}
+    
     def send_request(
         self, prompt: str, image: Union[bytes, str] = None
     ) -> Tuple[str, int]:
@@ -267,6 +325,7 @@ class Gemini:
                     f"Non-successful response status: {response_status_code}. Check Gemini session status."
                 )
                 return None
+            print(response_text)
             parser = ResponseParser(cookies=self.cookies)
             parsed_response = parser.parse(response_text)
             return self._create_model_output(parsed_response)
